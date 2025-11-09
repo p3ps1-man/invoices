@@ -5,9 +5,28 @@ require_once 'vendor/autoload.php';
 use Dompdf\Dompdf;
 use Carbon\Carbon;
 use Dotenv\Dotenv;
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception;
 
 $dotenv = Dotenv::createImmutable(__DIR__);
 $dotenv->load();
+
+$mailClient = new PHPMailer(true);
+
+try {
+    $mailClient->isSMTP();
+    $mailClient->SMTPAuth = true;
+    $mailClient->Host = $_ENV['COMPANY_EMAIL_HOST'];
+    $mailClient->Username = $_ENV['COMPANY_EMAIL'];
+    $mailClient->Password = $_ENV['COMPANY_EMAIL_PASSWORD'];
+    $mailClient->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+    $mailClient->Port = 587;
+    $mailClient->CharSet = 'UTF-8';
+
+    $mailClient->setFrom($_ENV['COMPANY_EMAIL'], $_ENV['COMPANY_OWNER']);
+} catch (Exception $e) {
+    die("Failed creating email client");
+}
 
 
 $hours = isset($_POST['hours']) ? floatval($_POST['hours']) : 0;
@@ -22,8 +41,10 @@ $now = Carbon::now();
 $invoiceKey = $now->format('Y-m');
 $invoiceDate = $now->format('d.m.Y');
 
-$lastDayOfMonth = Carbon::now()->subMonth()->endOfMonth()->format('d.m.Y');
-$firstDayOfMonth = Carbon::now()->subMonth()->startOfMonth()->format('d.m.Y');
+$prevMonth = Carbon::now()->subMonth();
+
+$lastDayOfMonth = $prevMonth->endOfMonth()->format('d.m.Y');
+$firstDayOfMonth = $prevMonth->startOfMonth()->format('d.m.Y');
 $dueDate = Carbon::now()->startOfMonth()->addDays(14)->format("d.m.Y");
 
 $total = number_format($rate * $hours, 2, '.', ',');
@@ -31,7 +52,7 @@ $rate = number_format($rate, 2, '.', ',');
 
 $directory = "invoices/";
 if (!is_dir($directory)) {
-    if (!mkdir($directory, 0755, true)) {
+    if (!mkdir($directory, 0777, true)) {
         die('Failed to create directory...');
     }
 }
@@ -74,7 +95,7 @@ $html = <<<FAKTURA
     $defaultStyle
 </head>
 <body>
-    <p><b>{$_ENV["COMPANY_NAME"]}</b></p>
+    <p><b>{$_ENV["COMPANY_FULL_NAME"]}</b></p>
     <p><b>{$_ENV["COMPANY_INFO"]}</b></p>
     <p><b>Reg ID: {$_ENV["COMPANY_REG_ID"]} Tax ID: {$_ENV["COMPANY_TAX_ID"]}</b></p>
     <hr>
@@ -134,6 +155,24 @@ $dompdf->render();
 $fileName = "Invoice-" . $now->format("M-Y") . ".pdf";
 file_put_contents($directory . $fileName, $dompdf->output());
 
+try {
+    $mailClient->addAddress($_ENV['ADRESSING_COMPANY_INVOICE_EMAIL']);
+    $mailClient->Subject = "Invoice for company: " . $_ENV['COMPANY_NAME'];
+    $mailClient->Body = <<<MAILBODY
+    Hi,\n
+    Here is the invoice for the company {$_ENV["COMPANY_NAME"]} for {$prevMonth->format('F Y')}.\n
+    Kind regards,
+    {$_ENV["COMPANY_OWNER"]}
+    MAILBODY;
+    $mailClient->addAttachment($directory . $fileName);
+
+    if (!$mailClient->send()) {
+        die("Failed sending email to company\n" . $mailClient->ErrorInfo);
+    }
+} catch (Exception $e) {
+    die("Failed sending email to company");
+}
+
 $htmlSrpski = <<<FAKTURA
 <!DOCTYPE html>
 <html lang='en'>
@@ -143,7 +182,7 @@ $htmlSrpski = <<<FAKTURA
 </head>
 <body>
 
-    <p><b>{$_ENV["COMPANY_NAME"]}</b></p>
+    <p><b>{$_ENV["COMPANY_FULL_NAME"]}</b></p>
     <p><b>{$_ENV["COMPANY_INFO"]}</b></p>
     <p><b>Reg broj: {$_ENV["COMPANY_REG_ID"]} JIB: {$_ENV["COMPANY_TAX_ID"]}</b></p>
     <p><b>Tekući račun: {$_ENV["COMPANY_BANK_ACCOUNT"]}</b></p>
@@ -202,5 +241,21 @@ $dompdf->render();
 
 $fileName = "Faktura-" . $now->format("M-Y") . ".pdf";
 file_put_contents($directory . $fileName, $dompdf->output());
+
+try {
+    Carbon::setLocale('sr');
+    $mailClient->clearAddresses();
+    $mailClient->clearAttachments();
+    $mailClient->addAddress($_ENV['ACCOUNTANT_EMAIL']);
+    $mailClient->Subject = "Faktura za " . $prevMonth->translatedFormat('F Y');
+    $mailClient->Body = "Faktura za " . $prevMonth->translatedFormat('F Y');
+    $mailClient->addAttachment($directory . $fileName);
+
+    if (!$mailClient->send()) {
+        die("Failed sending email to accountant\n" . $mailClient->ErrorInfo);
+    }
+} catch (Exception $e) {
+    die("Failed sending email to accountant");
+}
 
 echo "INVOICES GENERATED";
