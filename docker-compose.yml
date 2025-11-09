@@ -1,0 +1,18 @@
+services:
+  php:
+    build: .
+    container_name: inv
+    ports:
+      - "80:80"
+    volumes:
+      - ./src:/var/www/html
+    networks:
+      - app-network
+    environment:
+      - USER_ID=1001
+      - GROUP_ID=1001
+    command: php -S 0.0.0.0:80 -t /var/www/html
+
+networks:
+  app-network:
+    driver: bridge
